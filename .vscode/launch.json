@@ -1,0 +1,41 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_sim.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--cluster_spec=cluster_spec/n8g8.csv",
+                "--print",
+                "--scheme=yarn",
+                "--trace_file=trace-data/trace3.csv",
+                "--schedule=multi-resource-blossom-same-gpu-unaware",
+                "--log_path=results/n8g8jtrace3/muri_original",
+                "--multi_resource=4"
+            ]
+        },
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_sim_muri.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--cluster_spec=cluster_spec/n8g8.csv",
+                "--print",
+                "--scheme=yarn",
+                "--trace_file=trace-data/trace3.csv",
+                "--schedule=multi-resource-blossom-same-gpu-unaware",
+                "--log_path=results/n8g8jtrace3/muri_test",
+                "--multi_resource=4"
+            ]
+        }
+    ]
+}
