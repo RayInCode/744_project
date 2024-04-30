@@ -99,6 +99,10 @@ flags.DEFINE_integer('round_interval', 1440,
                 '''Interval for each round of scheduling''')
 flags.DEFINE_integer('ordering', 1,
                 '''set the ordering for scheduler''')
+flags.DEFINE_boolean('gputime', True, 
+                '''set the priority of runnable job by gputime or not''')
+flags.DEFINE_boolean('know_duration', False, 
+                '''Whether the duration of jobs are known or not''')
 
 FLAGS = flags.FLAGS
 
@@ -243,20 +247,20 @@ def main():
     ''' Prepare jobs'''
     job_generator.prepare_job_start_events()
 
-    job_state = jobs.JOBS
+    jobs_state = jobs.JOBS
     # # init policies
     placement_policy = placement.JobPlacement()
     scheduling_policy = scheduler.Muri()
 
-    blox_mgr = blox_manager.Blox_manager(job_state, cluster_state, LOG)
+    blox_mgr = blox_manager.Blox_manager(jobs_state, cluster_state, LOG)
     round_interval = FLAGS.round_interval
     # while True:
-    #     job_state.predict_completed_jobs() # keep a list for predict-complete jobs in job_state
+    #     jobs_state.predict_completed_jobs() # keep a list for predict-complete jobs in jobs_state
     #     arriving_jobs = job_generator.pop_arriving_jobs(blox_mgr.time)
     #     event_sim['end_jobs']
     #     '''handle all activated jobs in last round''' 
-    #     job_state.handle_completed_jobs()  # check out completed jobs in this round, and update their states
-    #     job_state.update_runnalble_jobs()  # update the satus of other uncompleted jobs
+    #     jobs_state.handle_completed_jobs()  # check out completed jobs in this round, and update their states
+    #     jobs_state.update_runnalble_jobs()  # update the satus of other uncompleted jobs
         
     #     '''handle arriving jobs when last round is running'''
     #     new_jobs = job_generator.generate()
@@ -275,7 +279,7 @@ def main():
     event['end_jobs'] = []
     event['start_jobs'] = []
 
-    while (len(job_generator.job_events) + len(job_state.runnable_jobs))> 0:
+    while (len(job_generator.job_events) + len(jobs_state.runnable_jobs))> 0:
         print("Event Time: ", blox_mgr.time)
 
         event['time'] = blox_mgr.time
@@ -284,72 +288,62 @@ def main():
         event['end_jobs'] = blox_mgr.predict_completed_jobs()
         event['start_jobs'] =  job_generator.pop_arriving_jobs(blox_mgr.time)
         blox_mgr.handle_completed_jobs(event) 
-        # # for ending jobs, release gpu
-        # if 'end_jobs' in event:
-        #     for e_job in event['end_jobs']:
-        #         tmp = float(blox_mgr.time - e_job['last_check_time']) 
-        #         e_job['total_executed_time'] = float(e_job['total_executed_time'] + tmp)
-        #         #job completes
-        #         cluster_state.release_job_res(e_job)
-        #         # cluster_state.release_gpus(e_job)
-        #         LOG.job_complete(e_job, blox_mgr.time)
-        #         job_state.runnable_jobs.remove(e_job)
-        #         # print("11111111111", e_job['job_idx'], e_job['num_gpu'], e_job['duration'], e_job['end_time']-e_job['start_time'])
-
-        # blox_mgr.update_runnalble_jobs(event)
+        blox_mgr.add_new_jobs(event)
         #for new-start jobs, add to runnable
-        if 'start_jobs' in event:
-            for s_job in event['start_jobs']:
-                #add into runnable list with pending status
-                job_state.move_to_runnable(s_job)
+        # if 'start_jobs' in event:
+        #     for s_job in event['start_jobs']:
+        #         #add into runnable list with pending status
+        #         jobs_state.move_to_runnable(s_job)
 
-                s_job['remaining_time'] = s_job['duration']
-                s_job['remaining_gputime'] = float(s_job['remaining_time'] * s_job['num_gpu'])
-                s_job['total_executed_time'] = 0.0
-                s_job['total_executed_gputime'] = 0.0
-                s_job['calc_executed_time'] = 0.0
-                util.print_fn('---- job[%d] is added' % s_job['job_idx'])
+        #         s_job['remaining_time'] = s_job['duration']
+        #         s_job['remaining_gputime'] = float(s_job['remaining_time'] * s_job['num_gpu'])
+        #         s_job['total_executed_time'] = 0.0
+        #         s_job['total_executed_gputime'] = 0.0
+        #         s_job['calc_executed_time'] = 0.0
+        #         util.print_fn('---- job[%d] is added' % s_job['job_idx'])
 
-        gputime = True
-        know_duration = False
-        #update the status for all running jobs, update metrics for last round, and update values for the comming round
-        for rjob in job_state.runnable_jobs:
-            if 'RUNNING' == rjob['status']:
-                tmp_oh = rjob['overhead']
-                tmp = max(blox_mgr.time - rjob['last_check_time']-tmp_oh, 0)   
-                rjob['remaining_iteration'] -= tmp/rjob['iteration_time_cur']
-                rjob['calc_executed_time'] = float(rjob['calc_executed_time'] + tmp/rjob['iteration_time_cur']*rjob['iteration_time'])
-                rjob['total_executed_time'] = float(rjob['total_executed_time'] + blox_mgr.time - rjob['last_check_time'])
-                rjob['last_check_time'] = blox_mgr.time
-                rjob['remaining_time'] = rjob['remaining_iteration'] * rjob['iteration_time']
-                if gputime:
-                    rjob['remaining_gputime'] = float(rjob['remaining_time'] * rjob['num_gpu'])
-                    if not know_duration:
-                        rjob['total_executed_gputime'] = float(rjob['total_executed_time'] * rjob['num_gpu'])
-                # print(blox_mgr.time, 'check: running ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
-            elif 'PENDING' == rjob['status']:
-                tmp = float(blox_mgr.time - rjob['last_check_time'])
-                rjob['pending_time'] = float(rjob['pending_time'] + tmp)
-                rjob['last_check_time'] = blox_mgr.time
-                # print(blox_mgr.time, 'check: pending ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
-            elif 'END' == rjob['status']: #almost impossible
-                job_state.runnable_jobs.remove(rjob)
-                print(blox_mgr.time, 'check: end ', rjob['job_idx'], rjob['total_executed_time'], rjob['duration'])
-                pass
-            if rjob['status'] != 'END':
-                if know_duration: 
-                    if gputime:
-                        rjob['sort_val']=rjob['remaining_gputime']
-                    else:
-                        rjob['sort_val']=rjob['remaining_time']
-                else:
-                    if gputime:
-                        rjob['sort_val']=rjob['total_executed_gputime']
-                    else:
-                        rjob['sort_val']=rjob['total_executed_time']
+
+        blox_mgr.update_runnalble_jobs(event)
+        # gputime = True
+        # know_duration = False
+        # #update the status for all running jobs, update metrics for last round, and update values for the comming round
+        # for rjob in jobs_state.runnable_jobs:
+        #     if 'RUNNING' == rjob['status']:
+        #         tmp_oh = rjob['overhead']
+        #         tmp = max(blox_mgr.time - rjob['last_check_time']-tmp_oh, 0)   
+        #         rjob['remaining_iteration'] -= tmp/rjob['iteration_time_cur']
+        #         rjob['calc_executed_time'] = float(rjob['calc_executed_time'] + tmp/rjob['iteration_time_cur']*rjob['iteration_time'])
+        #         rjob['total_executed_time'] = float(rjob['total_executed_time'] + blox_mgr.time - rjob['last_check_time'])
+        #         rjob['last_check_time'] = blox_mgr.time
+        #         rjob['remaining_time'] = rjob['remaining_iteration'] * rjob['iteration_time']
+        #         if gputime:
+        #             rjob['remaining_gputime'] = float(rjob['remaining_time'] * rjob['num_gpu'])
+        #             if not know_duration:
+        #                 rjob['total_executed_gputime'] = float(rjob['total_executed_time'] * rjob['num_gpu'])
+        #         # print(blox_mgr.time, 'check: running ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
+        #     elif 'PENDING' == rjob['status']:
+        #         tmp = float(blox_mgr.time - rjob['last_check_time'])
+        #         rjob['pending_time'] = float(rjob['pending_time'] + tmp)
+        #         rjob['last_check_time'] = blox_mgr.time
+        #         # print(blox_mgr.time, 'check: pending ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
+        #     elif 'END' == rjob['status']: #almost impossible
+        #         jobs_state.runnable_jobs.remove(rjob)
+        #         print(blox_mgr.time, 'check: end ', rjob['job_idx'], rjob['total_executed_time'], rjob['duration'])
+        #         pass
+        #     if rjob['status'] != 'END':
+        #         if know_duration: 
+        #             if gputime:
+        #                 rjob['sort_val']=rjob['remaining_gputime']
+        #             else:
+        #                 rjob['sort_val']=rjob['remaining_time']
+        #         else:
+        #             if gputime:
+        #                 rjob['sort_val']=rjob['total_executed_gputime']
+        #             else:
+        #                 rjob['sort_val']=rjob['total_executed_time']
 
         #sort jobs with shortest first
-        job_state.runnable_jobs.sort(key = lambda e:e.__getitem__('sort_val'))
+        jobs_state.runnable_jobs.sort(key = lambda e:e.__getitem__('sort_val'))
         
         #group runnable jobs with according to gpu num, in each group, jobs are in order
         run_jobs = list()
@@ -358,7 +352,7 @@ def main():
         GPU_chosen_job = dict()
         GPU_nums = dict()
         required_gpu = 0
-        for rjob in job_state.runnable_jobs:
+        for rjob in jobs_state.runnable_jobs:
             # assert rjob['packing_used'] < 2
             rjob['packing_used'] = 0    #reset to unpacking status
             num_gpu = rjob['num_gpu']
@@ -373,7 +367,7 @@ def main():
         cluster_state.empty_infra() # release all resource for comming round
 
         #select jobs to schedule, select one can go with other three(at most) which require the same gpu num
-        for rjob in job_state.runnable_jobs: 
+        for rjob in jobs_state.runnable_jobs: 
             if rjob['packing_used'] == 1:
                 continue
             ret = try_get_job_res(rjob, True) # the key function here
@@ -415,10 +409,10 @@ def main():
                     if itertime_all/itertime_sum >1:
                         print('unpack: ', [job.job_idx for job in packing.packing_jobs])
                         for job in packing.packing_jobs:
-                            rjob = job_state.find_runnable_job(job.job_idx)
+                            rjob = jobs_state.find_runnable_job(job.job_idx)
                             new_packing.append((key, _Packing(rjob), rjob['sort_val']))
                     else:
-                        sort_val = min([job_state.find_runnable_job(job.job_idx)['sort_val'] for job in packing.packing_jobs])
+                        sort_val = min([jobs_state.find_runnable_job(job.job_idx)['sort_val'] for job in packing.packing_jobs])
                         new_packing.append((key, packing, sort_val))
             new_packing.sort(key=lambda e:e[2])
             cluster_state.empty_infra()
@@ -426,7 +420,7 @@ def main():
             #if we unpack some jobs, we need to check the placement avalibility again
             packings = dict()
             for packing in new_packing:
-                rjob = job_state.find_runnable_job(packing[1].packing_jobs[0].job_idx)
+                rjob = jobs_state.find_runnable_job(packing[1].packing_jobs[0].job_idx)
                 if 'RUNNING'==rjob['status']:
                     if 'placements' in rjob:
                         del rjob['placements'][:]
@@ -441,9 +435,9 @@ def main():
         cluster_state.empty_infra()
 
         #final placement let packing with more num_gpu reuqired place first
-        job_state.runnable_jobs.sort(key = lambda e:e.__getitem__('num_gpu'), reverse=True)
+        jobs_state.runnable_jobs.sort(key = lambda e:e.__getitem__('num_gpu'), reverse=True)
         tmp_job_placement = dict()
-        for rjob in job_state.runnable_jobs:
+        for rjob in jobs_state.runnable_jobs:
             # print("after packing: ", rjob['job_idx'], rjob['placements'])
             if 'RUNNING' == rjob['status']:
                 if 'placements' in rjob: 
@@ -465,7 +459,7 @@ def main():
                 rjob['packing'] = packing_cur
                 rjob['overhead'] = 0
                 for pjob_ in packing_cur.packing_jobs:
-                    pjob = job_state.find_runnable_job(pjob_.job_idx)
+                    pjob = jobs_state.find_runnable_job(pjob_.job_idx)
                     if pjob['model_name'] in overhead_dict[rjob['num_gpu']]:
                         rjob['overhead'] += overhead_dict[rjob['num_gpu']][pjob['model_name']]
                     else:
@@ -514,7 +508,7 @@ def main():
 
         # get the next end_event
         # del end_events[:]
-        # for rjob in job_state.runnable_jobs:
+        # for rjob in jobs_state.runnable_jobs:
         #     if 'RUNNING' == rjob['status']:
         #         end_time = float(blox_mgr.time + rjob['remaining_iteration']*rjob['iteration_time_cur'])
         #         # print(blox_mgr.time, rjob['job_idx'], rjob['remaining_time'], rjob['iteration_time'], rjob['iteration_time_cur'], end_time)
