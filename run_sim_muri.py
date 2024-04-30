@@ -283,28 +283,18 @@ def main():
         event['start_jobs'] = []
         event['end_jobs'] = blox_mgr.predict_completed_jobs()
         event['start_jobs'] =  job_generator.pop_arriving_jobs(blox_mgr.time)
-        # for rjob in job_state.runnable_jobs:
-        #     if 'RUNNING' == rjob['status']:
-        #         remaining_time = rjob['remaining_iteration']*rjob['iteration_time_cur']
-        #         if(remaining_time <= round_interval):
-        #             event['end_jobs'].append(rjob)
-    
-        # if len(job_generator.job_events) > 0 and job_generator.job_events[0]['time'] <= event['time']:
-        #     event['start_jobs'] = job_generator.job_events[0]['start_jobs']
-        #     job_generator.job_events.pop(0)
-
-        # blox_manager.handle_completed_jobs(event, cluster_state, LOG)  #TODO:involved too many components, should be handled by blox manager
-        # for ending jobs, release gpu
-        if 'end_jobs' in event:
-            for e_job in event['end_jobs']:
-                tmp = float(blox_mgr.time - e_job['last_check_time']) 
-                e_job['total_executed_time'] = float(e_job['total_executed_time'] + tmp)
-                #job completes
-                cluster_state.release_job_res(e_job)
-                # cluster_state.release_gpus(e_job)
-                LOG.job_complete(e_job, blox_mgr.time)
-                job_state.runnable_jobs.remove(e_job)
-                # print("11111111111", e_job['job_idx'], e_job['num_gpu'], e_job['duration'], e_job['end_time']-e_job['start_time'])
+        blox_mgr.handle_completed_jobs(event) 
+        # # for ending jobs, release gpu
+        # if 'end_jobs' in event:
+        #     for e_job in event['end_jobs']:
+        #         tmp = float(blox_mgr.time - e_job['last_check_time']) 
+        #         e_job['total_executed_time'] = float(e_job['total_executed_time'] + tmp)
+        #         #job completes
+        #         cluster_state.release_job_res(e_job)
+        #         # cluster_state.release_gpus(e_job)
+        #         LOG.job_complete(e_job, blox_mgr.time)
+        #         job_state.runnable_jobs.remove(e_job)
+        #         # print("11111111111", e_job['job_idx'], e_job['num_gpu'], e_job['duration'], e_job['end_time']-e_job['start_time'])
 
         # blox_mgr.update_runnalble_jobs(event)
         #for new-start jobs, add to runnable
