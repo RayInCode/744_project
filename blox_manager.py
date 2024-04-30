@@ -3,15 +3,21 @@ import cluster
 import flags
 import log
 import util
+import scheduler
+import placement
 
 FLAGS = flags.FLAGS
 
 class Blox_manager():
-    def __init__(self, jobs_state: jobs._TFJobs, cluster_state: cluster._Cluster, LOG: log._Log):
+    def __init__(self, jobs_state: jobs._TFJobs, cluster_state: cluster._Cluster, LOG: log._Log,
+                 scheduling_policy: scheduler.Scheduler, placement_policy: placement.JobPlacement):
         self.jobs_state = jobs_state
         self.cluster_state = cluster_state
         self.log = LOG
         self.time = 0
+        self.scheduling_policy = scheduling_policy
+        self.placement_policy = placement_policy
+        self.packings = dict()
 
 
     def predict_completed_jobs(self) -> list:
@@ -82,3 +88,6 @@ class Blox_manager():
                     else:
                         rjob['sort_val']=rjob['total_executed_time']
 
+    def schedule(self) -> dict:
+        self.packings = self.scheduling_policy.schedule(self.jobs_state, self.cluster_state)
+        return self.packings

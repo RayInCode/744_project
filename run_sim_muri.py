@@ -19,8 +19,8 @@ import log
 import cvxpy as cp
 from cvxpy import SolverError
 from matching import Blossom_Same, _Packing
-import scheduler
-import placement
+from scheduler import Muri
+from placement import YarnPlacement
 import blox_manager
 
 sys.setrecursionlimit(1000000000)
@@ -249,10 +249,10 @@ def main():
 
     jobs_state = jobs.JOBS
     # # init policies
-    placement_policy = placement.JobPlacement()
-    scheduling_policy = scheduler.Muri()
+    yarn_placement = YarnPlacement()
+    muri = Muri()
 
-    blox_mgr = blox_manager.Blox_manager(jobs_state, cluster_state, LOG)
+    blox_mgr = blox_manager.Blox_manager(jobs_state, cluster_state, LOG, muri, yarn_placement)
     round_interval = FLAGS.round_interval
     # while True:
     #     jobs_state.predict_completed_jobs() # keep a list for predict-complete jobs in jobs_state
@@ -289,146 +289,96 @@ def main():
         event['start_jobs'] =  job_generator.pop_arriving_jobs(blox_mgr.time)
         blox_mgr.handle_completed_jobs(event) 
         blox_mgr.add_new_jobs(event)
-        #for new-start jobs, add to runnable
-        # if 'start_jobs' in event:
-        #     for s_job in event['start_jobs']:
-        #         #add into runnable list with pending status
-        #         jobs_state.move_to_runnable(s_job)
-
-        #         s_job['remaining_time'] = s_job['duration']
-        #         s_job['remaining_gputime'] = float(s_job['remaining_time'] * s_job['num_gpu'])
-        #         s_job['total_executed_time'] = 0.0
-        #         s_job['total_executed_gputime'] = 0.0
-        #         s_job['calc_executed_time'] = 0.0
-        #         util.print_fn('---- job[%d] is added' % s_job['job_idx'])
-
-
         blox_mgr.update_runnalble_jobs(event)
-        # gputime = True
-        # know_duration = False
-        # #update the status for all running jobs, update metrics for last round, and update values for the comming round
-        # for rjob in jobs_state.runnable_jobs:
-        #     if 'RUNNING' == rjob['status']:
-        #         tmp_oh = rjob['overhead']
-        #         tmp = max(blox_mgr.time - rjob['last_check_time']-tmp_oh, 0)   
-        #         rjob['remaining_iteration'] -= tmp/rjob['iteration_time_cur']
-        #         rjob['calc_executed_time'] = float(rjob['calc_executed_time'] + tmp/rjob['iteration_time_cur']*rjob['iteration_time'])
-        #         rjob['total_executed_time'] = float(rjob['total_executed_time'] + blox_mgr.time - rjob['last_check_time'])
-        #         rjob['last_check_time'] = blox_mgr.time
-        #         rjob['remaining_time'] = rjob['remaining_iteration'] * rjob['iteration_time']
-        #         if gputime:
-        #             rjob['remaining_gputime'] = float(rjob['remaining_time'] * rjob['num_gpu'])
-        #             if not know_duration:
-        #                 rjob['total_executed_gputime'] = float(rjob['total_executed_time'] * rjob['num_gpu'])
-        #         # print(blox_mgr.time, 'check: running ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
-        #     elif 'PENDING' == rjob['status']:
-        #         tmp = float(blox_mgr.time - rjob['last_check_time'])
-        #         rjob['pending_time'] = float(rjob['pending_time'] + tmp)
-        #         rjob['last_check_time'] = blox_mgr.time
-        #         # print(blox_mgr.time, 'check: pending ', rjob['job_idx'], rjob['num_gpu'], rjob['total_executed_time'], rjob['calc_executed_time'], rjob['remaining_time'], rjob['duration'], rjob['pending_time'], rjob['iteration_time_cur'], rjob['iteration_time'])
-        #     elif 'END' == rjob['status']: #almost impossible
-        #         jobs_state.runnable_jobs.remove(rjob)
-        #         print(blox_mgr.time, 'check: end ', rjob['job_idx'], rjob['total_executed_time'], rjob['duration'])
-        #         pass
-        #     if rjob['status'] != 'END':
-        #         if know_duration: 
-        #             if gputime:
-        #                 rjob['sort_val']=rjob['remaining_gputime']
-        #             else:
-        #                 rjob['sort_val']=rjob['remaining_time']
-        #         else:
-        #             if gputime:
-        #                 rjob['sort_val']=rjob['total_executed_gputime']
-        #             else:
-        #                 rjob['sort_val']=rjob['total_executed_time']
+        packings = blox_mgr.schedule()
 
-        #sort jobs with shortest first
-        jobs_state.runnable_jobs.sort(key = lambda e:e.__getitem__('sort_val'))
+        # #sort jobs with shortest first
+        # jobs_state.runnable_jobs.sort(key = lambda e:e.__getitem__('sort_val'))
         
-        #group runnable jobs with according to gpu num, in each group, jobs are in order
+        # #group runnable jobs with according to gpu num, in each group, jobs are in order
         run_jobs = list()
         preempt_jobs = list()
-        GPU_num_job = dict()
-        GPU_chosen_job = dict()
-        GPU_nums = dict()
-        required_gpu = 0
-        for rjob in jobs_state.runnable_jobs:
-            # assert rjob['packing_used'] < 2
-            rjob['packing_used'] = 0    #reset to unpacking status
-            num_gpu = rjob['num_gpu']
-            if num_gpu not in GPU_num_job:
-                GPU_num_job[num_gpu] = list()
-            GPU_num_job[num_gpu].append(rjob)
-            if num_gpu not in GPU_chosen_job:
-                GPU_chosen_job[num_gpu] = 0
-                GPU_nums[num_gpu] = 0
+        # GPU_num_job = dict()
+        # GPU_chosen_job = dict()
+        # GPU_nums = dict()
+        # required_gpu = 0
+        # for rjob in jobs_state.runnable_jobs:
+        #     # assert rjob['packing_used'] < 2
+        #     rjob['packing_used'] = 0    #reset to unpacking status
+        #     num_gpu = rjob['num_gpu']
+        #     if num_gpu not in GPU_num_job:
+        #         GPU_num_job[num_gpu] = list()
+        #     GPU_num_job[num_gpu].append(rjob)
+        #     if num_gpu not in GPU_chosen_job:
+        #         GPU_chosen_job[num_gpu] = 0
+        #         GPU_nums[num_gpu] = 0
 
-        #scan / execute jobs one by one
-        cluster_state.empty_infra() # release all resource for comming round
+        # #scan / execute jobs one by one
+        # cluster_state.empty_infra() # release all resource for comming round
 
-        #select jobs to schedule, select one can go with other three(at most) which require the same gpu num
-        for rjob in jobs_state.runnable_jobs: 
-            if rjob['packing_used'] == 1:
-                continue
-            ret = try_get_job_res(rjob, True) # the key function here
-            num_gpu = rjob['num_gpu']
-            if ret == True:
-                up_bd = min(GPU_chosen_job[num_gpu]+FLAGS.packing_num, len(GPU_num_job[num_gpu]))
-                GPU_nums[num_gpu] += 1
-                for tmp_id in range(GPU_chosen_job[num_gpu], up_bd):
-                    GPU_num_job[num_gpu][tmp_id]['packing_used']=1
-                GPU_chosen_job[num_gpu] = up_bd
+        # #select jobs to schedule, select one can go with other three(at most) which require the same gpu num
+        # for rjob in jobs_state.runnable_jobs: 
+        #     if rjob['packing_used'] == 1:
+        #         continue
+        #     ret = try_get_job_res(rjob, True) # the key function here
+        #     num_gpu = rjob['num_gpu']
+        #     if ret == True:
+        #         up_bd = min(GPU_chosen_job[num_gpu]+FLAGS.packing_num, len(GPU_num_job[num_gpu]))
+        #         GPU_nums[num_gpu] += 1
+        #         for tmp_id in range(GPU_chosen_job[num_gpu], up_bd):
+        #             GPU_num_job[num_gpu][tmp_id]['packing_used']=1
+        #         GPU_chosen_job[num_gpu] = up_bd
         
-        #truncate the GPU_num_job to keep chosen ones for next scheduling
-        for key in GPU_num_job.keys():
-            GPU_num_job[key] = GPU_num_job[key][:GPU_chosen_job[key]]
-            required_gpu += GPU_chosen_job[key]*key
+        # #truncate the GPU_num_job to keep chosen ones for next scheduling
+        # for key in GPU_num_job.keys():
+        #     GPU_num_job[key] = GPU_num_job[key][:GPU_chosen_job[key]]
+        #     required_gpu += GPU_chosen_job[key]*key
 
-        # print('before packing')
-        # for key,value in GPU_num_job.items():
-        #     print(key, 'GPU(s): ', len(value))
-        #     print([rjob['job_idx'] for rjob in value])
+        # # print('before packing')
+        # # for key,value in GPU_num_job.items():
+        # #     print(key, 'GPU(s): ', len(value))
+        # #     print([rjob['job_idx'] for rjob in value])
 
 
-        # time_before = time.time()
-        # matching algorithm
-        packings = Blossom_Same.run(GPU_num_job, cluster_state.num_gpu)
-        # print('after packing', time.time()-time_before)
-        # for key, value in packings.items():
-        #     for packing in value:
-        #         print([packing_job.job_idx for packing_job in packing.packing_jobs], end=':::')
-        #         print('gpu', [packing_job.num_gpu for packing_job in packing.packing_jobs])
+        # # time_before = time.time()
+        # # matching algorithm
+        # packings = Blossom_Same.run(GPU_num_job, cluster_state.num_gpu)
+        # # print('after packing', time.time()-time_before)
+        # # for key, value in packings.items():
+        # #     for packing in value:
+        # #         print([packing_job.job_idx for packing_job in packing.packing_jobs], end=':::')
+        # #         print('gpu', [packing_job.num_gpu for packing_job in packing.packing_jobs])
         
         
-        if FLAGS.autopack:
-            new_packing = list()
-            for key, value in packings.items():
-                for packing in value:
-                    itertime_all = packing.calc_iteration_time()
-                    itertime_sum = sum([job.iteration_time for job in packing.packing_jobs])
-                    if itertime_all/itertime_sum >1:
-                        print('unpack: ', [job.job_idx for job in packing.packing_jobs])
-                        for job in packing.packing_jobs:
-                            rjob = jobs_state.find_runnable_job(job.job_idx)
-                            new_packing.append((key, _Packing(rjob), rjob['sort_val']))
-                    else:
-                        sort_val = min([jobs_state.find_runnable_job(job.job_idx)['sort_val'] for job in packing.packing_jobs])
-                        new_packing.append((key, packing, sort_val))
-            new_packing.sort(key=lambda e:e[2])
-            cluster_state.empty_infra()
+        # if FLAGS.autopack:
+        #     new_packing = list()
+        #     for key, value in packings.items():
+        #         for packing in value:
+        #             itertime_all = packing.calc_iteration_time()
+        #             itertime_sum = sum([job.iteration_time for job in packing.packing_jobs])
+        #             if itertime_all/itertime_sum >1:
+        #                 print('unpack: ', [job.job_idx for job in packing.packing_jobs])
+        #                 for job in packing.packing_jobs:
+        #                     rjob = jobs_state.find_runnable_job(job.job_idx)
+        #                     new_packing.append((key, _Packing(rjob), rjob['sort_val']))
+        #             else:
+        #                 sort_val = min([jobs_state.find_runnable_job(job.job_idx)['sort_val'] for job in packing.packing_jobs])
+        #                 new_packing.append((key, packing, sort_val))
+        #     new_packing.sort(key=lambda e:e[2])
+        #     cluster_state.empty_infra()
 
-            #if we unpack some jobs, we need to check the placement avalibility again
-            packings = dict()
-            for packing in new_packing:
-                rjob = jobs_state.find_runnable_job(packing[1].packing_jobs[0].job_idx)
-                if 'RUNNING'==rjob['status']:
-                    if 'placements' in rjob:
-                        del rjob['placements'][:]
-                ret = try_get_job_res(rjob, True)
-                if ret==True:
-                    if packing[0] not in packings:
-                        packings[packing[0]] = list()
-                    packings[packing[0]].append(packing[1])
+        #     #if we unpack some jobs, we need to check the placement avalibility again
+        #     packings = dict()
+        #     for packing in new_packing:
+        #         rjob = jobs_state.find_runnable_job(packing[1].packing_jobs[0].job_idx)
+        #         if 'RUNNING'==rjob['status']:
+        #             if 'placements' in rjob:
+        #                 del rjob['placements'][:]
+        #         ret = try_get_job_res(rjob, True)
+        #         if ret==True:
+        #             if packing[0] not in packings:
+        #                 packings[packing[0]] = list()
+        #             packings[packing[0]].append(packing[1])
 
         # print("_______________________new placement____________________")
         # deal with the packing plan
